@@ -13,6 +13,34 @@ from app.translate import translate
 from app.main import bp
 
 
+def get_pagination_urls(pagination, endpoint, **kwargs):
+    """Extract next_url and prev_url from a pagination object."""
+    next_url = url_for(endpoint, page=pagination.next_num, **kwargs) \
+        if pagination.has_next else None
+    prev_url = url_for(endpoint, page=pagination.prev_num, **kwargs) \
+        if pagination.has_prev else None
+    return next_url, prev_url
+
+
+def lookup_user_or_redirect(username, action):
+    """Find a user by username; flash and redirect if not found or is self.
+
+    Returns the user on success, or a redirect response on failure.
+    """
+    user = db.session.scalar(
+        sa.select(User).where(User.username == username))
+    if user is None:
+        flash(_('User %(username)s not found.', username=username))
+        return redirect(url_for('main.index'))
+    if user == current_user:
+        if action == 'follow':
+            flash(_('You cannot follow yourself!'))
+        else:
+            flash(_('You cannot unfollow yourself!'))
+        return redirect(url_for('main.user', username=username))
+    return user
+
+
 @bp.before_app_request
 def before_request():
     if current_user.is_authenticated:
@@ -42,10 +70,7 @@ def index():
     posts = db.paginate(current_user.following_posts(), page=page,
                         per_page=current_app.config['POSTS_PER_PAGE'],
                         error_out=False)
-    next_url = url_for('main.index', page=posts.next_num) \
-        if posts.has_next else None
-    prev_url = url_for('main.index', page=posts.prev_num) \
-        if posts.has_prev else None
+    next_url, prev_url = get_pagination_urls(posts, 'main.index')
     return render_template('index.html', title=_('Home'), form=form,
                            posts=posts.items, next_url=next_url,
                            prev_url=prev_url)
@@ -59,10 +84,7 @@ def explore():
     posts = db.paginate(query, page=page,
                         per_page=current_app.config['POSTS_PER_PAGE'],
                         error_out=False)
-    next_url = url_for('main.explore', page=posts.next_num) \
-        if posts.has_next else None
-    prev_url = url_for('main.explore', page=posts.prev_num) \
-        if posts.has_prev else None
+    next_url, prev_url = get_pagination_urls(posts, 'main.explore')
     return render_template('index.html', title=_('Explore'),
                            posts=posts.items, next_url=next_url,
                            prev_url=prev_url)
@@ -77,10 +99,8 @@ def user(username):
     posts = db.paginate(query, page=page,
                         per_page=current_app.config['POSTS_PER_PAGE'],
                         error_out=False)
-    next_url = url_for('main.user', username=user.username,
-                       page=posts.next_num) if posts.has_next else None
-    prev_url = url_for('main.user', username=user.username,
-                       page=posts.prev_num) if posts.has_prev else None
+    next_url, prev_url = get_pagination_urls(
+        posts, 'main.user', username=user.username)
     form = EmptyForm()
     return render_template('user.html', user=user, posts=posts.items,
                            next_url=next_url, prev_url=prev_url, form=form)
@@ -116,14 +136,9 @@ def edit_profile():
 def follow(username):
     form = EmptyForm()
     if form.validate_on_submit():
-        user = db.session.scalar(
-            sa.select(User).where(User.username == username))
-        if user is None:
-            flash(_('User %(username)s not found.', username=username))
-            return redirect(url_for('main.index'))
-        if user == current_user:
-            flash(_('You cannot follow yourself!'))
-            return redirect(url_for('main.user', username=username))
+        user = lookup_user_or_redirect(username, 'follow')
+        if not isinstance(user, User):
+            return user
         current_user.follow(user)
         db.session.commit()
         flash(_('You are following %(username)s!', username=username))
@@ -137,14 +152,9 @@ def follow(username):
 def unfollow(username):
     form = EmptyForm()
     if form.validate_on_submit():
-        user = db.session.scalar(
-            sa.select(User).where(User.username == username))
-        if user is None:
-            flash(_('User %(username)s not found.', username=username))
-            return redirect(url_for('main.index'))
-        if user == current_user:
-            flash(_('You cannot unfollow yourself!'))
-            return redirect(url_for('main.user', username=username))
+        user = lookup_user_or_redirect(username, 'unfollow')
+        if not isinstance(user, User):
+            return user
         current_user.unfollow(user)
         db.session.commit()
         flash(_('You are not following %(username)s.', username=username))
@@ -208,10 +218,7 @@ def messages():
     messages = db.paginate(query, page=page,
                            per_page=current_app.config['POSTS_PER_PAGE'],
                            error_out=False)
-    next_url = url_for('main.messages', page=messages.next_num) \
-        if messages.has_next else None
-    prev_url = url_for('main.messages', page=messages.prev_num) \
-        if messages.has_prev else None
+    next_url, prev_url = get_pagination_urls(messages, 'main.messages')
     return render_template('messages.html', messages=messages.items,
                            next_url=next_url, prev_url=prev_url)
 
