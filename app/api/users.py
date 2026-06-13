@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 from flask import request, url_for, abort
 from app import db
-from app.models import User
+from app.models import User, Post, Message, Notification, Task
 from app.api import bp
 from app.api.auth import token_auth
 from app.api.errors import bad_request
@@ -79,3 +79,28 @@ def update_user(id):
     user.from_dict(data, new_user=False)
     db.session.commit()
     return user.to_dict()
+
+
+@bp.route('/users/<int:id>', methods=['DELETE'])
+@token_auth.login_required
+def delete_user(id):
+    if token_auth.current_user().id != id:
+        abort(403)
+    user = db.get_or_404(User, id)
+    # Delete related records
+    for post in db.session.scalars(user.posts.select()):
+        db.session.delete(post)
+    for msg in db.session.scalars(user.messages_sent.select()):
+        db.session.delete(msg)
+    for msg in db.session.scalars(user.messages_received.select()):
+        db.session.delete(msg)
+    for n in db.session.scalars(user.notifications.select()):
+        db.session.delete(n)
+    for t in db.session.scalars(user.tasks.select()):
+        db.session.delete(t)
+    # Clear relationships
+    db.session.execute(user.following.delete())
+    db.session.execute(user.followers.delete())
+    db.session.delete(user)
+    db.session.commit()
+    return '', 204

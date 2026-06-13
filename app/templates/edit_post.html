@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% import "bootstrap_wtf.html" as wtf %}
+
+{% block content %}
+    <h1>{{ _('Edit Post') }}</h1>
+    <p>
+        {{ _('Posted by') }} <a href="{{ url_for('main.user', username=post.author.username) }}">{{ post.author.username }}</a>
+        &mdash; {{ moment(post.timestamp).fromNow() }}
+    </p>
+    {{ wtf.quick_form(form) }}
+{% endblock %}

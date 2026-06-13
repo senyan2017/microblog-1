@@ -7,7 +7,7 @@ import sqlalchemy as sa
 from langdetect import detect, LangDetectException
 from app import db
 from app.main.forms import EditProfileForm, EmptyForm, PostForm, SearchForm, \
-    MessageForm
+    MessageForm, EditPostForm, DeleteForm
 from app.models import User, Post, Message, Notification
 from app.translate import translate
 from app.main import bp
@@ -239,3 +239,73 @@ def notifications():
         'data': n.get_data(),
         'timestamp': n.timestamp
     } for n in notifications]
+
+
+@bp.route('/edit_post/<int:id>', methods=['GET', 'POST'])
+@login_required
+def edit_post(id):
+    post = db.first_or_404(sa.select(Post).where(Post.id == id))
+    if post.author != current_user:
+        flash(_('You cannot edit this post.'))
+        return redirect(url_for('main.index'))
+    form = EditPostForm()
+    if form.validate_on_submit():
+        post.body = form.post.data
+        try:
+            post.language = detect(form.post.data)
+        except LangDetectException:
+            post.language = ''
+        db.session.commit()
+        flash(_('Your changes have been saved.'))
+        return redirect(url_for('main.user', username=current_user.username))
+    elif request.method == 'GET':
+        form.post.data = post.body
+    return render_template('edit_post.html', title=_('Edit Post'), form=form,
+                           post=post)
+
+
+@bp.route('/delete_post/<int:id>', methods=['POST'])
+@login_required
+def delete_post(id):
+    post = db.first_or_404(sa.select(Post).where(Post.id == id))
+    if post.author != current_user:
+        flash(_('You cannot delete this post.'))
+        return redirect(url_for('main.index'))
+    form = DeleteForm()
+    if form.validate_on_submit():
+        db.session.delete(post)
+        db.session.commit()
+        flash(_('Your post has been deleted.'))
+    return redirect(url_for('main.user', username=current_user.username))
+
+
+@bp.route('/delete_account', methods=['POST'])
+@login_required
+def delete_account():
+    form = DeleteForm()
+    if form.validate_on_submit():
+        # Delete all posts by the user
+        for post in db.session.scalars(current_user.posts.select()):
+            db.session.delete(post)
+        # Delete all messages sent/received
+        for msg in db.session.scalars(
+                current_user.messages_sent.select()):
+            db.session.delete(msg)
+        for msg in db.session.scalars(
+                current_user.messages_received.select()):
+            db.session.delete(msg)
+        # Delete notifications
+        for n in db.session.scalars(
+                current_user.notifications.select()):
+            db.session.delete(n)
+        # Delete tasks
+        for t in db.session.scalars(current_user.tasks.select()):
+            db.session.delete(t)
+        # Unfollow everyone and remove followers
+        current_user.following.delete()
+        current_user.followers.delete()
+        db.session.delete(current_user)
+        db.session.commit()
+        flash(_('Your account has been deleted.'))
+        return redirect(url_for('main.index'))
+    return redirect(url_for('main.user', username=current_user.username))

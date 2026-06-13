@@ -299,6 +299,26 @@ class Post(SearchableMixin, db.Model):
     def __repr__(self):
         return '<Post {}>'.format(self.body)
 
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'body': self.body,
+            'timestamp': self.timestamp.replace(
+                tzinfo=timezone.utc).isoformat(),
+            'author': url_for('api.get_user', id=self.user_id),
+            'language': self.language,
+            '_links': {
+                'self': url_for('api.get_post', id=self.id),
+                'author': url_for('api.get_user', id=self.user_id),
+            }
+        }
+
+    def from_dict(self, data):
+        if 'body' in data:
+            self.body = data['body']
+        if 'language' in data:
+            self.language = data['language']
+
 
 class Message(db.Model):
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
