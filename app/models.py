@@ -109,9 +109,19 @@ class User(PaginatedAPIMixin, UserMixin, db.Model):
     token: so.Mapped[Optional[str]] = so.mapped_column(
         sa.String(32), index=True, unique=True)
     token_expiration: so.Mapped[Optional[datetime]]
+    is_admin: so.Mapped[bool] = so.mapped_column(default=False)
+    bio: so.Mapped[Optional[str]] = so.mapped_column(sa.Text)
+    website: so.Mapped[Optional[str]] = so.mapped_column(sa.String(200))
+    location: so.Mapped[Optional[str]] = so.mapped_column(sa.String(100))
 
     posts: so.WriteOnlyMapped['Post'] = so.relationship(
         back_populates='author')
+    articles: so.WriteOnlyMapped['Article'] = so.relationship(
+        back_populates='author')
+    comments: so.WriteOnlyMapped['Comment'] = so.relationship(
+        back_populates='author')
+    likes: so.WriteOnlyMapped['Like'] = so.relationship(
+        back_populates='user')
     following: so.WriteOnlyMapped['User'] = so.relationship(
         secondary=followers, primaryjoin=(followers.c.follower_id == id),
         secondaryjoin=(followers.c.followed_id == id),
@@ -354,3 +364,155 @@ class Task(db.Model):
     def get_progress(self):
         job = self.get_rq_job()
         return job.meta.get('progress', 0) if job is not None else 100
+
+
+# ============================================================
+# Blog Platform Models
+# ============================================================
+
+article_tags = sa.Table(
+    'article_tags',
+    db.metadata,
+    sa.Column('article_id', sa.Integer, sa.ForeignKey('article.id'),
+              primary_key=True),
+    sa.Column('tag_id', sa.Integer, sa.ForeignKey('tag.id'),
+              primary_key=True)
+)
+
+
+class Category(db.Model):
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    name: so.Mapped[str] = so.mapped_column(sa.String(64), unique=True,
+                                            index=True)
+    slug: so.Mapped[str] = so.mapped_column(sa.String(64), unique=True,
+                                            index=True)
+    description: so.Mapped[Optional[str]] = so.mapped_column(sa.Text)
+    created_at: so.Mapped[datetime] = so.mapped_column(
+        default=lambda: datetime.now(timezone.utc))
+
+    articles: so.WriteOnlyMapped['Article'] = so.relationship(
+        back_populates='category')
+
+    def __repr__(self):
+        return '<Category {}>'.format(self.name)
+
+    def articles_count(self):
+        query = sa.select(sa.func.count()).select_from(
+            self.articles.select().subquery())
+        return db.session.scalar(query)
+
+
+class Tag(db.Model):
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    name: so.Mapped[str] = so.mapped_column(sa.String(32), unique=True,
+                                            index=True)
+    slug: so.Mapped[str] = so.mapped_column(sa.String(32), unique=True,
+                                            index=True)
+
+    def __repr__(self):
+        return '<Tag {}>'.format(self.name)
+
+
+class Article(SearchableMixin, db.Model):
+    __searchable__ = ['title', 'summary', 'content']
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    title: so.Mapped[str] = so.mapped_column(sa.String(200), index=True)
+    slug: so.Mapped[str] = so.mapped_column(sa.String(200), unique=True,
+                                            index=True)
+    summary: so.Mapped[Optional[str]] = so.mapped_column(sa.Text)
+    content: so.Mapped[Optional[str]] = so.mapped_column(sa.Text)
+    cover_image: so.Mapped[Optional[str]] = so.mapped_column(sa.String(300))
+    status: so.Mapped[str] = so.mapped_column(
+        sa.String(20), default='draft', index=True)  # draft, published
+    view_count: so.Mapped[int] = so.mapped_column(default=0)
+    created_at: so.Mapped[datetime] = so.mapped_column(
+        index=True, default=lambda: datetime.now(timezone.utc))
+    updated_at: so.Mapped[Optional[datetime]] = so.mapped_column(
+        onupdate=lambda: datetime.now(timezone.utc))
+    user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(User.id),
+                                               index=True)
+    category_id: so.Mapped[Optional[int]] = so.mapped_column(
+        sa.ForeignKey(Category.id), index=True)
+
+    author: so.Mapped[User] = so.relationship(back_populates='articles')
+    category: so.Mapped[Optional[Category]] = so.relationship(
+        back_populates='articles')
+    tags: so.Mapped[list[Tag]] = so.relationship(
+        secondary=article_tags, lazy='subquery',
+        backref=sa.orm.backref('articles', lazy=True))
+    comments: so.WriteOnlyMapped['Comment'] = so.relationship(
+        back_populates='article')
+    likes: so.WriteOnlyMapped['Like'] = so.relationship(
+        back_populates='article')
+
+    def __repr__(self):
+        return '<Article {}>'.format(self.title)
+
+    def likes_count(self):
+        query = sa.select(sa.func.count()).select_from(
+            self.likes.select().subquery())
+        return db.session.scalar(query)
+
+    def comments_count(self):
+        query = sa.select(sa.func.count()).select_from(
+            self.comments.select().where(Comment.is_approved == True).subquery())
+        return db.session.scalar(query)
+
+    def is_liked_by(self, user):
+        query = self.likes.select().where(Like.user_id == user.id)
+        return db.session.scalar(query) is not None
+
+    @staticmethod
+    def generate_unique_slug(title):
+        import re
+        slug = title.lower().strip()
+        slug = re.sub(r'[^\w\s-]', '', slug)
+        slug = re.sub(r'[-\s]+', '-', slug)
+        original_slug = slug
+        counter = 1
+        while db.session.scalar(
+                sa.select(Article).where(Article.slug == slug)) is not None:
+            slug = f'{original_slug}-{counter}'
+            counter += 1
+        return slug
+
+
+class Comment(db.Model):
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    body: so.Mapped[str] = so.mapped_column(sa.Text)
+    created_at: so.Mapped[datetime] = so.mapped_column(
+        index=True, default=lambda: datetime.now(timezone.utc))
+    is_approved: so.Mapped[bool] = so.mapped_column(default=True)
+    article_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(Article.id),
+                                                  index=True)
+    user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(User.id),
+                                               index=True)
+    parent_id: so.Mapped[Optional[int]] = so.mapped_column(
+        sa.ForeignKey('comment.id'))
+
+    article: so.Mapped[Article] = so.relationship(back_populates='comments')
+    author: so.Mapped[User] = so.relationship(back_populates='comments')
+    replies: so.Mapped[list['Comment']] = so.relationship(
+        backref=sa.orm.backref('parent', remote_side='Comment.id'),
+        lazy='dynamic')
+
+    def __repr__(self):
+        return '<Comment on Article {}>'.format(self.article_id)
+
+
+class Like(db.Model):
+    __table_args__ = (sa.UniqueConstraint('user_id', 'article_id'),)
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    created_at: so.Mapped[datetime] = so.mapped_column(
+        default=lambda: datetime.now(timezone.utc))
+    user_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(User.id),
+                                               index=True)
+    article_id: so.Mapped[int] = so.mapped_column(sa.ForeignKey(Article.id),
+                                                  index=True)
+
+    user: so.Mapped[User] = so.relationship(back_populates='likes')
+    article: so.Mapped[Article] = so.relationship(back_populates='likes')
+
+    def __repr__(self):
+        return '<Like by User {} on Article {}>'.format(
+            self.user_id, self.article_id)
