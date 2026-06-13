@@ -102,5 +102,139 @@ class UserModelCase(unittest.TestCase):
         self.assertEqual(f4, [p4])
 
 
+class APITestCase(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app(TestConfig)
+        self.app_context = self.app.app_context()
+        self.app_context.push()
+        db.create_all()
+        self.client = self.app.test_client()
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        self.app_context.pop()
+
+    def _create_user(self, username='john', email='john@example.com',
+                     password='cat'):
+        u = User(username=username, email=email)
+        u.set_password(password)
+        db.session.add(u)
+        db.session.commit()
+        return u
+
+    def _get_token(self, username, password):
+        response = self.client.post(
+            '/api/tokens',
+            headers={'Authorization': 'Basic ' +
+                     (username + ':' + password).encode('base64').decode()
+                     .strip()})
+        return response.get_json()['token']
+
+    def _auth_header(self, token):
+        return {'Authorization': 'Bearer ' + token}
+
+    # --- create_user (POST /api/users) tests ---
+
+    def test_create_user_valid_json(self):
+        """POST /api/users with valid JSON should create user and return 201."""
+        response = self.client.post(
+            '/api/users',
+            json={'username': 'john', 'email': 'john@example.com',
+                  'password': 'cat'})
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertEqual(data['username'], 'john')
+
+    def test_create_user_no_content_type(self):
+        """POST /api/users without JSON Content-Type should return 4xx, not 500."""
+        response = self.client.post(
+            '/api/users',
+            data='{"username": "john", "email": "john@example.com", '
+                 '"password": "cat"}')
+        # 415 Unsupported Media Type from Werkzeug, or 400 from our check
+        self.assertIn(response.status_code, [400, 415])
+        data = response.get_json()
+        self.assertIn('error', data)
+
+    def test_create_user_empty_body(self):
+        """POST /api/users with empty body should return 400, not 500."""
+        response = self.client.post(
+            '/api/users',
+            content_type='application/json',
+            data='')
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_user_invalid_json(self):
+        """POST /api/users with malformed JSON should return 400, not 500."""
+        response = self.client.post(
+            '/api/users',
+            content_type='application/json',
+            data='{invalid json}')
+        self.assertEqual(response.status_code, 400)
+
+    def test_create_user_missing_fields(self):
+        """POST /api/users with missing required fields should return 400."""
+        response = self.client.post(
+            '/api/users',
+            json={'username': 'john'})
+        self.assertEqual(response.status_code, 400)
+        data = response.get_json()
+        self.assertIn('must include', data['message'])
+
+    # --- update_user (PUT /api/users/<id>) tests ---
+
+    def test_update_user_valid_json(self):
+        """PUT /api/users/<id> with valid JSON should update user."""
+        u = self._create_user()
+        token = u.get_token()
+        db.session.commit()
+        response = self.client.put(
+            '/api/users/{}'.format(u.id),
+            headers=self._auth_header(token),
+            json={'username': 'john_updated'})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data['username'], 'john_updated')
+
+    def test_update_user_no_content_type(self):
+        """PUT /api/users/<id> without JSON Content-Type should return 4xx, not 500."""
+        u = self._create_user()
+        token = u.get_token()
+        db.session.commit()
+        response = self.client.put(
+            '/api/users/{}'.format(u.id),
+            headers=self._auth_header(token),
+            data='{"username": "john_updated"}')
+        # 415 Unsupported Media Type from Werkzeug, or 400 from our check
+        self.assertIn(response.status_code, [400, 415])
+        data = response.get_json()
+        self.assertIn('error', data)
+
+    def test_update_user_empty_body(self):
+        """PUT /api/users/<id> with empty body should return 400, not 500."""
+        u = self._create_user()
+        token = u.get_token()
+        db.session.commit()
+        response = self.client.put(
+            '/api/users/{}'.format(u.id),
+            headers=self._auth_header(token),
+            content_type='application/json',
+            data='')
+        self.assertEqual(response.status_code, 400)
+
+    def test_update_user_invalid_json(self):
+        """PUT /api/users/<id> with malformed JSON should return 400, not 500."""
+        u = self._create_user()
+        token = u.get_token()
+        db.session.commit()
+        response = self.client.put(
+            '/api/users/{}'.format(u.id),
+            headers=self._auth_header(token),
+            content_type='application/json',
+            data='{invalid json}')
+        self.assertEqual(response.status_code, 400)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
