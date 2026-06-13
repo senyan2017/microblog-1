@@ -45,6 +45,8 @@ def get_following(id):
 @bp.route('/users', methods=['POST'])
 def create_user():
     data = request.get_json()
+    if data is None:
+        return bad_request('invalid or missing JSON request body')
     if 'username' not in data or 'email' not in data or 'password' not in data:
         return bad_request('must include username, email and password fields')
     if db.session.scalar(sa.select(User).where(
@@ -68,6 +70,8 @@ def update_user(id):
         abort(403)
     user = db.get_or_404(User, id)
     data = request.get_json()
+    if data is None:
+        return bad_request('invalid or missing JSON request body')
     if 'username' in data and data['username'] != user.username and \
         db.session.scalar(sa.select(User).where(
             User.username == data['username'])):

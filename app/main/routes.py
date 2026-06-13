@@ -157,6 +157,11 @@ def unfollow(username):
 @login_required
 def translate_text():
     data = request.get_json()
+    if data is None:
+        return {'error': 'invalid or missing JSON request body'}, 400
+    if 'text' not in data or 'source_language' not in data or \
+            'dest_language' not in data:
+        return {'error': 'must include text, source_language and dest_language fields'}, 400
     return {'text': translate(data['text'],
                               data['source_language'],
                               data['dest_language'])}
